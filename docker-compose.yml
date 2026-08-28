@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  lyric-change:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lyric-change:latest
+    container_name: lyric-change
+    restart: unless-stopped
+    ports:
+      - "7860:7860"
+    environment:
+      - HF_ENDPOINT=https://hf-mirror.com
+    volumes:
+      # 持久化模型权重，避免容器重建后重复下载
+      - ./pretrained_models:/app/SoulX-Singer/pretrained_models
+      # 持久化输出音频与元数据
+      - ./outputs:/app/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

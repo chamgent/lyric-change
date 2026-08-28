@@ -29,7 +29,29 @@
 
 ## 🚀 快速开始
 
-### 1. 克隆本项目与上游依赖
+### 方式一：Docker 一键部署（推荐）
+
+需本机已安装 [Docker](https://docs.docker.com/engine/install/) 与 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（用于 GPU 透传）。
+
+```bash
+# 1. 克隆项目
+git clone https://github.com/chamgent/lyric-change.git
+cd lyric-change
+
+# 2. 使用 Docker Compose 一键构建并启动（首次运行会自动下载模型）
+docker compose up -d
+
+# 3. 查看运行日志
+docker compose logs -f
+```
+
+容器启动后，在浏览器访问 `http://localhost:7860` 即可使用。
+
+---
+
+### 方式二：Conda 本地环境部署
+
+#### 1. 克隆本项目与上游依赖
 
 ```bash
 git clone https://github.com/chamgent/lyric-change.git
@@ -39,7 +61,7 @@ cd lyric-change
 git clone https://github.com/Soul-AILab/SoulX-Singer.git
 ```
 
-### 2. 创建环境与安装依赖
+#### 2. 创建环境与安装依赖
 
 ```bash
 conda create -n soulxsinger python=3.10 -y
@@ -52,7 +74,7 @@ pip install torch==2.2.0 torchvision torchaudio --index-url https://download.pyt
 pip install -r requirements.txt
 ```
 
-### 3. 一键下载预训练模型
+#### 3. 一键下载预训练模型
 
 运行内置的下载脚本（国内环境默认通过 `hf-mirror.com` 高速下载）：
 
@@ -113,6 +135,9 @@ lyric-change/
 ├── run_pipeline.py         # 命令行 CLI 端到端处理脚本
 ├── download_models.py      # 模型一键下载脚本
 ├── start_server_soulx.sh   # Linux 后台守护启动脚本
+├── Dockerfile              # Docker 镜像构建文件
+├── docker-compose.yml      # Docker Compose 编排与 GPU 透传配置
+├── docker-entrypoint.sh    # Docker 容器自动初始化入口
 ├── requirements.txt        # Python 依赖清单
 ├── core/
 │   ├── lyric_replace.py    # 核心：歌词注入、转音展开、逐句对齐算法
