@@ -176,7 +176,10 @@ def _pitch_shift(args, ref, src):
     if ref is not None:
         auto = estimate_pitch_shift(np.load(ref.f0_path), np.load(src.f0_path), args.auto_shift)
     total = auto + args.pitch_shift
-    print(f"      变调 {total:+d} 个半音（自动[{args.auto_shift}] {auto:+d}，手动 {args.pitch_shift:+d}）", flush=True)
+    parts = [f"自动[{args.auto_shift}] {auto:+d}"] if ref is not None and args.auto_shift != "off" else []
+    if args.pitch_shift:
+        parts.append(f"手动 {args.pitch_shift:+d}")
+    print(f"      变调 {total:+d} 个半音（{'，'.join(parts)}）" if parts else "      未变调", flush=True)
     return total
 
 
