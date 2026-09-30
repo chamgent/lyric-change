@@ -13,11 +13,14 @@ if BASE not in sys.path:
 
 from core.soulx_preprocess import new_run_dir, preprocess_audio
 from core.lyric_replace import (
-    load_metadata,
-    replace_lyrics,
+    apply_structure,
     count_clean_notes,
-    clean_text,
+    load_metadata,
+    note_structure,
+    parse_structure,
+    replace_lyrics,
     save_metadata,
+    structure_text,
 )
 from core.soulx_engine import SoulXSingerEngine
 
@@ -55,15 +58,51 @@ def recognize(audio_path, progress=gr.Progress()):
         audio_path, save_dir=workdir, language="Mandarin", vocal_sep=False
     )
     metadata = load_metadata(metadata_path)
-    total, per_phrase = count_clean_notes(metadata)
-    session = {"metadata": metadata, "prompt_wav": vocal_path, "workdir": workdir}
-    orig = clean_text(metadata)
+    structure = note_structure(metadata)
+    session = {
+        "orig_metadata": metadata,  # 识别原样，校正总是基于它重新计算
+        "metadata": metadata,  # 当前生效（可能已校正）的原词 metadata
+        "structure": structure,
+        "corrected": False,
+        "prompt_wav": vocal_path,
+        "workdir": workdir,
+    }
     progress(1.0, desc="识别完成")
-    return orig, f"原词 {total} 字，共 {len(per_phrase)} 句（每行一句）", session
+    return structure_text(structure), _structure_info(session), session
+
+
+def _structure_info(session, prefix=""):
+    total, per_phrase = count_clean_notes(session["metadata"], structure=session["structure"])
+    return f"{prefix}原词 {total} 字，共 {len(per_phrase)} 句（每行一句）"
+
+
+def correct(text, session):
+    """用户编辑原词结构：合法则立即生效（改字/改转音/改分句），否则提示错误并保留上一次有效结构。"""
+    if not session:
+        return "尚未识别", session
+    try:
+        structure = parse_structure(text)
+        metadata = apply_structure(session["orig_metadata"], structure, language="Mandarin")
+    except ValueError as e:
+        return f"🔴 {e}（仍使用上一次有效的原词结构）", session
+    changed = structure != note_structure(session["orig_metadata"])
+    session = {**session, "metadata": metadata, "structure": structure, "corrected": changed}
+    return _structure_info(session, "✅ 已应用校正：" if changed else ""), session
+
+
+def reset_structure(session):
+    """还原为自动识别的原词结构。"""
+    if not session:
+        return "", "尚未识别", session
+    structure = note_structure(session["orig_metadata"])
+    session = {**session, "metadata": session["orig_metadata"], "structure": structure, "corrected": False}
+    return structure_text(structure), _structure_info(session), session
 
 
 def live_count(new_lyrics, session):
-    total, per_phrase = count_clean_notes(session["metadata"]) if session else (0, [])
+    total, per_phrase = (
+        count_clean_notes(session["metadata"], structure=session["structure"]) if session else (0, [])
+    )
     if total == 0:
         return f"当前 {_char_count(new_lyrics)} 字"
     lines = [l.strip() for l in (new_lyrics or "").splitlines() if l.strip()]
@@ -86,10 +125,17 @@ def generate(new_lyrics, control_mode, session, progress=gr.Progress()):
 
     progress(0.1, desc="歌词替换...")
     try:
-        new_metadata = replace_lyrics(session["metadata"], new_lyrics, language="Mandarin")
+        new_metadata = replace_lyrics(
+            session["metadata"], new_lyrics, language="Mandarin", structure=session["structure"]
+        )
     except ValueError as e:
         raise gr.Error(str(e))
     save_metadata(new_metadata, os.path.join(session["workdir"], "edit_metadata.json"))
+    if session["corrected"]:
+        save_metadata(session["metadata"], os.path.join(session["workdir"], "corrected_metadata.json"))
+        # 分句信息不在 metadata 里，单独保存结构文本；可直接用于 CLI 的 --original-structure
+        with open(os.path.join(session["workdir"], "original_structure.txt"), "w", encoding="utf-8") as f:
+            f.write(structure_text(session["structure"]) + "\n")
 
     progress(0.3, desc="歌声合成（首次需加载模型）...")
     engine = _get_engine()
@@ -118,10 +164,20 @@ with gr.Blocks(title="改词翻唱 SoulX-Singer") as demo:
 
     with gr.Row():
         with gr.Column():
-            orig_lyrics = gr.Textbox(label="识别出的原歌词（每行一句，供参考）", lines=14, interactive=False)
-            orig_info = gr.Markdown("尚未识别")
+            orig_lyrics = gr.Textbox(
+                label="识别出的原歌词（可直接校正）",
+                info="每行一句；~ 表示转音（延续前一个字的拖音）。可改错字、把字改成 ~ 或把 ~ 改成字、移动换行来合并/拆分句子；字与 ~ 的总数不能变",
+                lines=14,
+            )
+            with gr.Row():
+                orig_info = gr.Markdown("尚未识别")
+                reset_btn = gr.Button("还原识别结果", size="sm", scale=0)
         with gr.Column():
-            new_lyrics = gr.Textbox(label="② 改后歌词（每行一句，转音自动补全）", lines=14)
+            new_lyrics = gr.Textbox(
+                label="② 改后歌词（每行一句，转音自动补全）",
+                info="每行字数与左侧对应行的字数一致（~ 不计）",
+                lines=14,
+            )
             count_info = gr.Markdown("当前 0 字")
 
     with gr.Row():
@@ -139,9 +195,22 @@ with gr.Blocks(title="改词翻唱 SoulX-Singer") as demo:
     audio_in.change(
         recognize, inputs=audio_in, outputs=[orig_lyrics, orig_info, session]
     ).then(live_count, inputs=[new_lyrics, session], outputs=count_info)
+    # .input 只响应用户编辑，识别结果写入文本框时不会触发
+    orig_lyrics.input(
+        correct, inputs=[orig_lyrics, session], outputs=[orig_info, session]
+    ).then(live_count, inputs=[new_lyrics, session], outputs=count_info)
+    reset_btn.click(
+        reset_structure, inputs=session, outputs=[orig_lyrics, orig_info, session]
+    ).then(live_count, inputs=[new_lyrics, session], outputs=count_info)
     new_lyrics.change(live_count, inputs=[new_lyrics, session], outputs=count_info)
     gen_btn.click(generate, inputs=[new_lyrics, control_mode, session], outputs=audio_out)
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.environ.get("GRADIO_SERVER_PORT", "7860")),
+        # 结果写在 <项目>/outputs 下；Gradio 默认只允许返回当前目录和临时目录的文件，
+        # 不在项目目录下启动（python /path/to/app.py）时生成会报 InvalidPathError
+        allowed_paths=[os.path.join(BASE, "outputs")],
+    )

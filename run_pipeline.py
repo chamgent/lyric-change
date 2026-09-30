@@ -2,9 +2,15 @@
 """端到端 CLI：干声 + 新歌词 -> 新干声。
 
 用法:
+    # 只识别：打印原词结构（每行一句，~ 表示转音），不合成
+    python run_pipeline.py --audio 干声.wav
+    # 改词合成
     python run_pipeline.py --audio 干声.wav --new-lyrics 新词.txt --output out.wav
+    # 识别有误时：把打印的原词结构复制到文件里改正，再用 --original-structure 传入
+    python run_pipeline.py --audio 干声.wav --original-structure 原词.txt --new-lyrics 新词.txt
 
 新词文件：每行一句（与原词句数/每句字数一致，转音自动补全）。
+原词结构文件：可改错字、把字改成 ~ 或把 ~ 改成字、移动换行来合并/拆分句子；字与 ~ 的总数不能变。
 """
 import argparse
 import os
@@ -15,11 +21,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.soulx_preprocess import new_run_dir, preprocess_audio
 from core.lyric_replace import (
-    load_metadata,
-    replace_lyrics,
+    apply_structure,
     count_clean_notes,
-    clean_text,
+    load_metadata,
+    note_structure,
+    parse_structure,
+    replace_lyrics,
     save_metadata,
+    structure_text,
 )
 from core.soulx_engine import SoulXSingerEngine
 
@@ -30,7 +39,11 @@ SOULX = os.path.join(BASE, "SoulX-Singer")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--audio", required=True, help="原曲干声")
-    ap.add_argument("--new-lyrics", required=True, help="新歌词文件(UTF-8)")
+    ap.add_argument("--new-lyrics", help="新歌词文件(UTF-8)；省略则只识别并打印原词结构")
+    ap.add_argument(
+        "--original-structure",
+        help="校正后的原词结构文件(UTF-8)，格式同运行时打印的「原词结构」",
+    )
     ap.add_argument("--output", default="output_cover.wav")
     ap.add_argument("--language", default="Mandarin")
     ap.add_argument("--vocal-sep", action="store_true", help="输入含伴奏则开启人声分离")
@@ -44,11 +57,19 @@ def main():
     args = ap.parse_args()
 
     args.audio = os.path.abspath(args.audio)
-    args.new_lyrics = os.path.abspath(args.new_lyrics)
     args.output = os.path.abspath(args.output)
 
-    with open(args.new_lyrics, encoding="utf-8") as f:
-        new_lyrics = f.read()
+    new_lyrics = None
+    if args.new_lyrics:
+        with open(args.new_lyrics, encoding="utf-8") as f:
+            new_lyrics = f.read()
+    structure = None
+    if args.original_structure:
+        with open(args.original_structure, encoding="utf-8") as f:
+            try:
+                structure = parse_structure(f.read())
+            except ValueError as e:
+                sys.exit(f"原词结构文件有误：{e}")
 
     workdir = new_run_dir(os.path.join(BASE, "outputs"), args.audio)
     print(f"工作目录：{workdir}", flush=True)
@@ -64,12 +85,32 @@ def main():
     print(f"      耗时 {time.time()-t0:.1f}s", flush=True)
 
     metadata = load_metadata(metadata_path)
-    total_clean, per_phrase = count_clean_notes(metadata)
-    print(f"[2/3] 歌词替换（去重后原词 {total_clean} 字，共 {len(per_phrase)} 句）...", flush=True)
-    print("---- 原词（每行一句） ----")
-    print(clean_text(metadata))
+    if structure is None:
+        structure = note_structure(metadata)
+        title = "原词结构（每行一句，~ 表示转音）"
+    else:
+        try:
+            metadata = apply_structure(metadata, structure, language=args.language)
+        except ValueError as e:
+            print("---- 自动识别的原词结构 ----")
+            print(structure_text(note_structure(metadata)))
+            sys.exit(f"原词结构与音频不符：{e}")
+        save_metadata(metadata, os.path.join(workdir, "corrected_metadata.json"))
+        title = "原词结构（已应用校正）"
+    total_clean, per_phrase = count_clean_notes(metadata, structure=structure)
+    print(f"---- {title}：{total_clean} 字，共 {len(per_phrase)} 句 ----")
+    print(structure_text(structure))
+    if new_lyrics is None:
+        print("未指定 --new-lyrics，仅识别。", flush=True)
+        return
 
-    new_metadata = replace_lyrics(metadata, new_lyrics, language=args.language)
+    print("[2/3] 歌词替换...", flush=True)
+    try:
+        new_metadata = replace_lyrics(
+            metadata, new_lyrics, language=args.language, structure=structure
+        )
+    except ValueError as e:
+        sys.exit(f"新歌词与原词结构不符：{e}")
     new_meta_path = os.path.join(workdir, "edit_metadata.json")
     save_metadata(new_metadata, new_meta_path)
 

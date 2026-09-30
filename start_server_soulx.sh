@@ -1,5 +1,6 @@
 #!/bin/bash
-# 后台启动 WebUI。需先激活依赖环境（conda/venv），或用 PYTHON=/path/to/python 指定解释器。
+# 后台启动 WebUI。需先激活依赖环境（conda/venv），或用 PYTHON=/path/to/python 指定解释器；
+# 端口默认 7860，可用 GRADIO_SERVER_PORT 指定。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -27,15 +28,22 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
+PORT="${GRADIO_SERVER_PORT:-7860}"
+# 端口已被其他程序占用时直接报错；否则下面的就绪检测会把别人的服务误判为启动成功
+if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+    echo "端口 $PORT 已被其他程序占用，可用 GRADIO_SERVER_PORT=<端口> 换一个端口" >&2
+    exit 1
+fi
+
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="$SCRIPT_DIR/SoulX-Singer:$PYTHONPATH"
+export GRADIO_SERVER_PORT="$PORT"
 
 nohup "$PYTHON" app.py > "$LOG_FILE" 2>&1 < /dev/null &
 PID=$!
 echo "$PID" > "$PID_FILE"
 
 # 等待端口就绪；进程提前退出则打印日志并返回失败
-PORT=7860  # 与 app.py 中 demo.launch(server_port=7860) 保持一致
 for _ in $(seq 1 120); do
     if ! kill -0 "$PID" 2>/dev/null; then
         echo "WebUI 启动失败，日志末尾：" >&2
