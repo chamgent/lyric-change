@@ -33,7 +33,13 @@ COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh
 
+# g2p_en downloads NLTK data on first import; keep it outside /root (mode 700) so
+# the app can read it after the entrypoint drops root privileges.
+ENV NLTK_DATA=/usr/local/share/nltk_data
+RUN mkdir -p ${NLTK_DATA}
+
 # Smoke test: fail the build early if the torch stack / upstream imports are broken
+# (importing core.lyric_replace also pre-downloads the NLTK data above)
 RUN python -c "import torch, torchaudio; assert torch.__version__.startswith('2.2.0'), torch.__version__; import core.lyric_replace, core.soulx_engine, core.soulx_preprocess"
 
 EXPOSE 7860

@@ -7,12 +7,28 @@ import json
 import os
 import subprocess
 import sys
+import time
+import uuid
 
 import jieba
+import librosa
+import soundfile as sf
 
 SOULX_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "SoulX-Singer"
 )
+
+
+def new_run_dir(outputs_root, audio_path):
+    """为一次处理创建独立工作目录：<outputs_root>/<音频名>-<时间>-<随机>。
+
+    只按文件名建目录会让同名音频、多次运行、多个用户互相覆盖中间文件和结果。
+    """
+    name = os.path.splitext(os.path.basename(audio_path))[0]
+    run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    path = os.path.join(outputs_root, f"{name}-{run_id}")
+    os.makedirs(path)
+    return path
 
 
 def load_asr_text(save_dir, pause_threshold=0.25):
@@ -74,17 +90,28 @@ def preprocess_audio(
     max_merge_duration=15000,
     device="cuda",
 ):
-    """运行预处理，返回 metadata.json 路径。
+    """运行预处理，返回 (metadata.json 路径, 预处理后的人声 vocal.wav 路径)。
+
+    vocal.wav 与 metadata 的时间轴一致（开启 vocal_sep 时是分离后的纯人声），
+    合成时应作为音色 prompt 使用，而不是原始输入。
 
     max_merge_duration: 合并后的单段最长时长(ms)。SoulX 模型对长片段会退化
     （中后段出现电流/咬字不清/时断时续），默认限制在 15s 以内，拆成多段分别合成。
     """
     os.makedirs(save_dir, exist_ok=True)
+
+    # 上游 pipeline 结束时会把 metadata.json 复制到「输入路径把 .wav/.mp3/.flac 替换成
+    # .json」的位置：输入若是 .m4a/.ogg/大写 .WAV 等，替换不生效，用户的原音频会被
+    # 覆盖；即使是 .wav 也会在用户目录里留下一个 .json。所以先转成工作目录内的 wav。
+    y, sr = librosa.load(audio_path, sr=None, mono=False)
+    input_wav = os.path.join(save_dir, "input.wav")
+    sf.write(input_wav, y.T, sr, subtype="FLOAT")
+
     cmd = [
         sys.executable,
         "-m",
         "preprocess.pipeline",
-        "--audio_path", audio_path,
+        "--audio_path", input_wav,
         "--save_dir", save_dir,
         "--language", language,
         "--device", device,
@@ -110,4 +137,4 @@ def preprocess_audio(
     if not os.path.exists(metadata_path):
         raise RuntimeError(f"preprocess 未产出 metadata.json:\n{out[-4000:]}")
 
-    return metadata_path
+    return metadata_path, os.path.join(save_dir, "vocal.wav")

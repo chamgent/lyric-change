@@ -13,7 +13,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from core.soulx_preprocess import preprocess_audio
+from core.soulx_preprocess import new_run_dir, preprocess_audio
 from core.lyric_replace import (
     load_metadata,
     replace_lyrics,
@@ -34,7 +34,13 @@ def main():
     ap.add_argument("--output", default="output_cover.wav")
     ap.add_argument("--language", default="Mandarin")
     ap.add_argument("--vocal-sep", action="store_true", help="输入含伴奏则开启人声分离")
-    ap.add_argument("--control", default="melody", choices=["score", "melody"])
+    ap.add_argument(
+        "--control",
+        default="score",
+        choices=["score", "melody"],
+        help="score（默认）：跟量化音符，新词咬字准确；melody：跟原唱 F0 曲线，"
+        "唱腔更还原但原唱咬字会带进来，可能串原词/含糊",
+    )
     args = ap.parse_args()
 
     args.audio = os.path.abspath(args.audio)
@@ -44,12 +50,12 @@ def main():
     with open(args.new_lyrics, encoding="utf-8") as f:
         new_lyrics = f.read()
 
-    workdir = os.path.join(BASE, "outputs", os.path.splitext(os.path.basename(args.audio))[0])
-    os.makedirs(workdir, exist_ok=True)
+    workdir = new_run_dir(os.path.join(BASE, "outputs"), args.audio)
+    print(f"工作目录：{workdir}", flush=True)
 
     print("[1/3] 预处理（ASR + 音符转写）...", flush=True)
     t0 = time.time()
-    metadata_path = preprocess_audio(
+    metadata_path, vocal_path = preprocess_audio(
         args.audio,
         save_dir=workdir,
         language=args.language,
@@ -75,7 +81,7 @@ def main():
     )
     t0 = time.time()
     audio, sr = engine.synthesize(
-        prompt_wav_path=args.audio,
+        prompt_wav_path=vocal_path,
         prompt_metadata=metadata,
         target_metadata=new_metadata,
         control=args.control,
