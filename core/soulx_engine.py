@@ -4,6 +4,7 @@
 复用官方 cli/inference.py 的模型构建与推理逻辑，封装为可长期驻留的
 单例引擎，供 Gradio WebUI 与 CLI 复用。
 """
+import copy
 import json
 import os
 import sys
@@ -106,7 +107,9 @@ class SoulXSingerEngine:
 
     @staticmethod
     def _ensure_loaded(meta):
+        # 上游 DataProcessor.merge_phoneme 会原地把 duration/phoneme 等字段改写成 list，
+        # 必须深拷贝，否则调用方缓存的 metadata（如 WebUI 的 _state）在首次合成后即被破坏。
         if isinstance(meta, str):
             with open(meta, encoding="utf-8") as f:
                 return json.load(f)
-        return meta
+        return copy.deepcopy(meta)

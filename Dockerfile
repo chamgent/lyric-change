@@ -3,8 +3,7 @@ FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     GRADIO_SERVER_NAME="0.0.0.0" \
-    GRADIO_SERVER_PORT=7860 \
-    HF_ENDPOINT="https://hf-mirror.com"
+    GRADIO_SERVER_PORT=7860
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \

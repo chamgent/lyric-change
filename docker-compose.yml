@@ -11,7 +11,9 @@ services:
     ports:
       - "7860:7860"
     environment:
-      - HF_ENDPOINT=https://hf-mirror.com
+      # 不设置时自动先试 hf-mirror.com，失败回退 huggingface.co；
+      # 如需指定下载源：HF_ENDPOINT=https://... docker compose up -d
+      - HF_ENDPOINT
     volumes:
       # 持久化模型权重，避免容器重建后重复下载
       - ./pretrained_models:/app/SoulX-Singer/pretrained_models
