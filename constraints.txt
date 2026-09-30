@@ -1,0 +1,6 @@
+# 锁定 PyTorch 全家桶，防止其他依赖（accelerate 等）把 torch 升级到与
+# 基础镜像 CUDA 12.1 / torchaudio 2.2.0 不兼容的版本。
+torch==2.2.0
+torchaudio==2.2.0
+torchvision==0.17.0
+numpy<2.0.0

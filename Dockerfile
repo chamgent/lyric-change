@@ -16,12 +16,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Clone upstream SoulX-Singer
-RUN git clone https://github.com/Soul-AILab/SoulX-Singer.git /app/SoulX-Singer
+# Clone upstream SoulX-Singer (pinned to a known-good commit)
+ARG SOULX_COMMIT=81aeb3ae772c70093c3de74dc23c92d983801ae4
+RUN git clone https://github.com/Soul-AILab/SoulX-Singer.git /app/SoulX-Singer \
+    && git -C /app/SoulX-Singer checkout ${SOULX_COMMIT}
 
 # Install Python dependencies
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt constraints.txt /app/
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # Copy application source code
 COPY core/ /app/core/
@@ -31,6 +33,9 @@ COPY download_models.py /app/download_models.py
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 
 RUN chmod +x /app/docker-entrypoint.sh
+
+# Smoke test: fail the build early if the torch stack / upstream imports are broken
+RUN python -c "import torch, torchaudio; assert torch.__version__.startswith('2.2.0'), torch.__version__; import core.lyric_replace, core.soulx_engine, core.soulx_preprocess"
 
 EXPOSE 7860
 
