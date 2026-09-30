@@ -41,6 +41,8 @@ RUN mkdir -p ${NLTK_DATA}
 # Smoke test: fail the build early if the torch stack / upstream imports are broken
 # (importing core.lyric_replace also pre-downloads the NLTK data above)
 RUN python -c "import torch, torchaudio; assert torch.__version__.startswith('2.2.0'), torch.__version__; import core.lyric_replace, core.soulx_engine, core.soulx_preprocess"
+# nltk>=3.9 needs averaged_perceptron_tagger_eng for English G2P, which g2p_en does not fetch itself
+RUN python -c "from core.nltk_data import ensure_english_g2p_data as e; assert e()"
 
 EXPOSE 7860
 

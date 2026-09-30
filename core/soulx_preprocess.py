@@ -9,11 +9,14 @@ import subprocess
 import sys
 import time
 import uuid
+import warnings
 from typing import NamedTuple, Optional
 
 import jieba
 import librosa
 import soundfile as sf
+
+from .nltk_data import ensure_english_g2p_data
 
 SOULX_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "SoulX-Singer"
@@ -118,6 +121,10 @@ def preprocess_audio(
         y = y[..., : int(max_seconds * sr)]
     input_wav = os.path.join(save_dir, "input.wav")
     sf.write(input_wav, y.T, sr, subtype="FLOAT")
+
+    # 上游预处理会给 ASR 结果注音，中文歌里若识别出英文单词就需要英文注音数据（缺失会崩溃）
+    if not ensure_english_g2p_data():
+        warnings.warn("英文注音所需的 NLTK 数据缺失且下载失败；若歌曲含英文，预处理可能失败")
 
     cmd = [
         sys.executable,

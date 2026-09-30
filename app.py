@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """改词翻唱 WebUI（SoulX-Singer）：上传干声 + 输入新歌词 -> 一键生成新干声。"""
 import os
-import re
 import sys
 
 import gradio as gr
@@ -16,6 +15,9 @@ from core.soulx_preprocess import REF_MAX_SECONDS, new_run_dir, preprocess_audio
 from core.lyric_replace import (
     apply_structure,
     count_clean_notes,
+    english_syllables,
+    extract_units,
+    unit_count,
     load_metadata,
     note_structure,
     parse_structure,
@@ -32,11 +34,6 @@ SOULX = os.path.join(BASE, "SoulX-Singer")
 _engine = None
 _svc_engine = None
 
-_CJK = re.compile(r"[\u4e00-\u9fff]")
-
-
-def _char_count(text):
-    return len(_CJK.findall(text or ""))
 
 
 def _get_engine():
@@ -153,19 +150,24 @@ def live_count(new_lyrics, session):
     total, per_phrase = (
         count_clean_notes(session["metadata"], structure=session["structure"]) if session else (0, [])
     )
+    try:
+        units = [extract_units(l) for l in (new_lyrics or "").splitlines() if l.strip()]
+        counts = [unit_count(u) for u in units]
+    except ValueError as e:  # 英文注音数据不可用
+        return f"🔴 {e}"
+    english = sorted({u for line in units for u in line if u.isascii()})
+    note = ""
+    if english:
+        note = "；英文按音节计：" + "、".join(f"{w}={english_syllables(w)}" for w in english[:8])
+        note += "（含英文时建议用 score 模式）"
     if total == 0:
-        return f"当前 {_char_count(new_lyrics)} 字"
-    lines = [l.strip() for l in (new_lyrics or "").splitlines() if l.strip()]
-    if len(lines) != len(per_phrase):
-        return f"🔴 行数不对：需 {len(per_phrase)} 行（每行一句），当前 {len(lines)} 行"
-    diffs = []
-    for i, (line, need) in enumerate(zip(lines, per_phrase)):
-        d = _char_count(line) - need
-        if d != 0:
-            diffs.append(f"第{i + 1}行{d:+d}字")
+        return f"当前 {sum(counts)} 字{note}"
+    if len(counts) != len(per_phrase):
+        return f"🔴 行数不对：需 {len(per_phrase)} 行（每行一句），当前 {len(counts)} 行"
+    diffs = [f"第{i + 1}行{got - need:+d}字" for i, (got, need) in enumerate(zip(counts, per_phrase)) if got != need]
     if not diffs:
-        return f"🟢 匹配（{len(per_phrase)} 句，共 {total} 字）"
-    return "🔴 " + "、".join(diffs)
+        return f"🟢 匹配（{len(per_phrase)} 句，共 {total} 字）{note}"
+    return "🔴 " + "、".join(diffs) + note
 
 
 def generate(new_lyrics, control_mode, auto_shift, manual_shift, session, ref, progress=gr.Progress()):
@@ -255,7 +257,7 @@ with gr.Blocks(title="改词翻唱 SoulX-Singer") as demo:
         with gr.Column():
             new_lyrics = gr.Textbox(
                 label="② 改后歌词（每行一句，转音自动补全）",
-                info="每行字数与左侧对应行的字数一致（~ 不计）",
+                info="每行字数与左侧对应行的字数一致（~ 不计）；可夹英文单词，按音节占字数，如 forever 占 3 个字",
                 lines=14,
             )
             count_info = gr.Markdown("当前 0 字")

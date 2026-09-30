@@ -62,4 +62,11 @@ download(
     os.path.join(base_models, "SoulX-Singer-Preprocess"),
 )
 
+print("=== 3. Downloading NLTK data for English G2P ===", flush=True)
+sys.path.insert(0, BASE)
+from core.nltk_data import ensure_english_g2p_data  # noqa: E402
+
+if not ensure_english_g2p_data():
+    sys.exit("NLTK 数据下载失败（英文注音需要），请检查网络后重试")
+
 print("=== All models downloaded successfully! ===", flush=True)

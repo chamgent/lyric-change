@@ -9,6 +9,11 @@
 （>= sp_threshold）才算句边界；短 <SP> 是一字多音中间的换气，不切句。
 这样显示和填词共用同一套句结构，天然一致。
 
+新歌词可夹英文单词：上游格式里一个英文单词占一个音符，但中文一个音符只唱一个
+音节，多音节单词直接塞进一个音符会被挤成一团（实测 forever 被唱成 fed）。所以
+英文单词按音节数占用词首音符：第一个音符写该词，其余音节的音符标为续音
+（note_type 3，与上游英文数据中一词跨多个音符的表示相同）。
+
 原词结构（structure）：list[list[str]]，每句一个列表，每个非 <SP> 音符一个符号：
 词首音符为该字，续音为 CONT（"~"）。自动识别可能分错句、错判转音或识别错字，
 用户可以编辑结构文本（见 structure_text / parse_structure）进行校正，
@@ -20,6 +25,7 @@ note_type 语义（来自 ROSVOT note2words 对齐）：
   3 = 同词续音（转音/一字多音，续音不算新字）
 """
 import copy
+import functools
 import json
 import os
 import re
@@ -31,20 +37,55 @@ SOULX_ROOT = os.path.join(
 if SOULX_ROOT not in sys.path:
     sys.path.insert(0, SOULX_ROOT)
 
-from preprocess.tools.g2p import g2p_transform
+from preprocess.tools.g2p import g2p_english, g2p_transform
 
-_CJK_RE = re.compile(r"[一-鿿]")
+from .nltk_data import ensure_english_g2p_data
+
+# 汉字，或英文单词（与上游 g2p 的英文单词规则一致，可带撇号，如 don't）
+_UNIT_RE = re.compile(r"[\u4e00-\u9fff]|[A-Za-z]+(?:'[A-Za-z]+)*")
+_EXTRA_SYLLABLE = "\x00"  # 内部标记：多音节英文单词的后续音节
 
 SP_THRESHOLD = 0.25
 
 CONT = "~"
-_STRUCT_SYMBOL_RE = re.compile(r"[一-鿿]|[~～]")  # 中文输入法打出的是全角「～」
+_STRUCT_SYMBOL_RE = re.compile(r"[\u4e00-\u9fff]|[~\uff5e]")  # 中文输入法打出的是全角「～」
 _UNSUPPORTED_RE = re.compile(r"[A-Za-z0-9]")
 
 
-def extract_chars(text):
-    """从用户输入中按序抽取所有汉字（忽略标点/空白/英文）。"""
-    return _CJK_RE.findall(text)
+def _is_english(unit):
+    return unit[0].isascii()
+
+
+def _require_english_g2p():
+    if not ensure_english_g2p_data():
+        raise ValueError("英文注音所需的 NLTK 数据缺失且自动下载失败，请联网后运行 python download_models.py")
+
+
+@functools.lru_cache(maxsize=4096)
+def english_syllables(word):
+    """英文单词的音节数（ARPAbet 中带重音数字的元音个数，至少 1）。"""
+    _require_english_g2p()
+    return max(1, sum(p[-1].isdigit() for p in g2p_english(word.lower())))
+
+
+def extract_units(text):
+    """从用户输入中按序抽取填词单位：汉字或英文单词（忽略标点/空白/数字）。"""
+    return _UNIT_RE.findall((text or "").replace("\u2019", "'"))  # 中文输入法的右单引号 ’
+
+
+def unit_count(units):
+    """一串填词单位占用的「字数」（词首音符数）：汉字 1 个，英文单词按音节数。"""
+    return sum(english_syllables(u) if _is_english(u) else 1 for u in units)
+
+
+def _expand_units(units):
+    """把多音节英文单词展开为 [词, 标记, 标记, ...]，与词首音符一一对应。"""
+    out = []
+    for u in units:
+        out.append(u)
+        if _is_english(u):
+            out.extend([_EXTRA_SYLLABLE] * (english_syllables(u) - 1))
+    return out
 
 
 def _note_phrases(metadata_list, sp_threshold=SP_THRESHOLD):
@@ -148,9 +189,13 @@ def _inject(metadata_list, structure, phrase_chars, language):
             if sym == CONT:
                 new_types.append("3")
             else:
-                cur = phrase_chars[pi][used[pi]]
+                unit = phrase_chars[pi][used[pi]]
                 used[pi] += 1
-                new_types.append("2")
+                if unit == _EXTRA_SYLLABLE:  # 英文单词的后续音节：延续该词
+                    new_types.append("3")
+                else:
+                    cur = unit
+                    new_types.append("2")
             new_tokens.append(cur)
         seg["text"] = " ".join(new_tokens)
         seg["note_type"] = " ".join(new_types)
@@ -219,7 +264,7 @@ def replace_lyrics(
     """按句把干净歌词注入 metadata（转音自动重复），返回新的 metadata list。
 
     new_lyrics_text: 新歌词，每行对应一句（行数与原词句数一致，空行忽略）。
-    每行汉字数 == 该句词首音符数；每句内的转音（续音）自动重复对应汉字。
+    每行字数 == 该句词首音符数（英文单词按音节计）；每句内的转音（续音）自动重复对应的字/词。
     某句字数不对会直接报出“第 N 句”，不会串到后面的句子。
     structure: 校正后的原词结构；为 None 时由 metadata 自动推出。
     """
@@ -232,11 +277,14 @@ def replace_lyrics(
 
     phrase_chars = []
     for i, (line, st) in enumerate(zip(lines, structure)):
-        chars = extract_chars(line)
+        units = extract_units(line)
         need = sum(1 for s in st if s != CONT)
-        if len(chars) != need:
-            raise ValueError(f"第 {i + 1} 句字数不匹配：原 {need} 字，你写 {len(chars)} 字")
-        phrase_chars.append(chars)
+        got = unit_count(units)
+        if got != need:
+            words = [f"{u}={english_syllables(u)}" for u in units if _is_english(u)]
+            hint = f"（英文按音节计：{'、'.join(words)}）" if words else ""
+            raise ValueError(f"第 {i + 1} 句字数不匹配：原 {need} 字，你写 {got} 字{hint}")
+        phrase_chars.append(_expand_units(units))
 
     return _inject(metadata_list, structure, phrase_chars, language)
 
