@@ -127,10 +127,10 @@ with gr.Blocks(title="改词翻唱 SoulX-Singer") as demo:
     with gr.Row():
         gen_btn = gr.Button("生成翻唱", variant="primary")
         control_mode = gr.Radio(
-            choices=[("score", "score"), ("melody", "melody")],
-            value="score",
+            choices=[("melody", "melody"), ("score", "score")],
+            value="melody",
             label="音高控制模式",
-            info="score（推荐）：跟量化音符，新词咬字准确；melody：跟原唱 F0 曲线，滑音/颤音更还原，但原唱咬字会带进来，可能串原词或含糊",
+            info="melody（默认）：跟原唱 F0 曲线，滑音/颤音/转音最还原；若出现串原词或咬字含糊，改用 score。score：跟量化音符，咬字准确但唱腔细节较少",
         )
 
     with gr.Row():

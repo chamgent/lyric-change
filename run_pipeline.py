@@ -36,10 +36,10 @@ def main():
     ap.add_argument("--vocal-sep", action="store_true", help="输入含伴奏则开启人声分离")
     ap.add_argument(
         "--control",
-        default="score",
-        choices=["score", "melody"],
-        help="score（默认）：跟量化音符，新词咬字准确；melody：跟原唱 F0 曲线，"
-        "唱腔更还原但原唱咬字会带进来，可能串原词/含糊",
+        default="melody",
+        choices=["melody", "score"],
+        help="melody（默认）：跟原唱 F0 曲线，滑音/颤音/转音最还原；若出现串原词"
+        "或咬字含糊，改用 score。score：跟量化音符，咬字准确但唱腔细节较少",
     )
     args = ap.parse_args()
 
