@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import uuid
+from typing import NamedTuple, Optional
 
 import jieba
 import librosa
@@ -29,6 +30,12 @@ def new_run_dir(outputs_root, audio_path):
     path = os.path.join(outputs_root, f"{name}-{run_id}")
     os.makedirs(path)
     return path
+
+
+class PreprocessResult(NamedTuple):
+    metadata_path: Optional[str]  # midi_transcribe=False 时为 None
+    vocal_path: str  # 预处理后的人声，与 metadata 时间轴一致，合成时作为音色 prompt
+    f0_path: str  # vocal.wav 的逐帧 F0（50 帧/秒），只换音色（SVC）与自动变调使用
 
 
 def load_asr_text(save_dir, pause_threshold=0.25):
@@ -89,14 +96,17 @@ def preprocess_audio(
     midi_transcribe=True,
     max_merge_duration=15000,
     device="cuda",
+    max_seconds=None,
 ):
-    """运行预处理，返回 (metadata.json 路径, 预处理后的人声 vocal.wav 路径)。
+    """运行预处理，返回 PreprocessResult(metadata_path, vocal_path, f0_path)。
 
     vocal.wav 与 metadata 的时间轴一致（开启 vocal_sep 时是分离后的纯人声），
     合成时应作为音色 prompt 使用，而不是原始输入。
 
+    midi_transcribe=False 时只提取 F0，不做歌词/音符识别（metadata_path 为 None）。
     max_merge_duration: 合并后的单段最长时长(ms)。SoulX 模型对长片段会退化
     （中后段出现电流/咬字不清/时断时续），默认限制在 15s 以内，拆成多段分别合成。
+    max_seconds: 只处理开头这么多秒（参考音色按上游建议限制在 30 秒内）。
     """
     os.makedirs(save_dir, exist_ok=True)
 
@@ -104,6 +114,8 @@ def preprocess_audio(
     # .json」的位置：输入若是 .m4a/.ogg/大写 .WAV 等，替换不生效，用户的原音频会被
     # 覆盖；即使是 .wav 也会在用户目录里留下一个 .json。所以先转成工作目录内的 wav。
     y, sr = librosa.load(audio_path, sr=None, mono=False)
+    if max_seconds:
+        y = y[..., : int(max_seconds * sr)]
     input_wav = os.path.join(save_dir, "input.wav")
     sf.write(input_wav, y.T, sr, subtype="FLOAT")
 
@@ -133,8 +145,36 @@ def preprocess_audio(
     if proc.returncode != 0:
         raise RuntimeError(f"preprocess 失败 (exit {proc.returncode}):\n{out[-4000:]}")
 
+    vocal_path = os.path.join(save_dir, "vocal.wav")
+    f0_path = os.path.join(save_dir, "vocal_f0.npy")
+    if not os.path.exists(f0_path):
+        raise RuntimeError(f"preprocess 未产出 vocal_f0.npy:\n{out[-4000:]}")
+    if not midi_transcribe:
+        return PreprocessResult(None, vocal_path, f0_path)
+
     metadata_path = os.path.join(save_dir, "metadata.json")
     if not os.path.exists(metadata_path):
         raise RuntimeError(f"preprocess 未产出 metadata.json:\n{out[-4000:]}")
 
-    return metadata_path, os.path.join(save_dir, "vocal.wav")
+    return PreprocessResult(metadata_path, vocal_path, f0_path)
+
+
+REF_MAX_SECONDS = 30  # 参考音色时长上限（与上游 WebUI 一致）
+
+
+def preprocess_reference(audio_path, save_dir, language="Mandarin", transcribe=True, device="cuda"):
+    """预处理参考音色：只取前 REF_MAX_SECONDS 秒，并合并为一段。
+
+    改词合成只用 metadata 第一段作为音色 prompt，所以要合并成一段；
+    只换音色（SVC）只需要人声与 F0，transcribe=False 可跳过歌词识别。
+    """
+    return preprocess_audio(
+        audio_path,
+        save_dir=save_dir,
+        language=language,
+        vocal_sep=False,
+        midi_transcribe=transcribe,
+        max_merge_duration=REF_MAX_SECONDS * 1000,
+        device=device,
+        max_seconds=REF_MAX_SECONDS,
+    )
