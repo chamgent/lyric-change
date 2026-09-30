@@ -29,4 +29,9 @@ loralib==0.1.2
 beartype==0.22.9
 matplotlib==3.10.8
 tqdm==4.67.1
+# pyworld 在 import 时依赖 pkg_resources（setuptools>=82 已移除）；缺失时上游
+# preprocess.tools 会静默吞掉 ImportError，最终报 "'NoneType' object is not callable"。
+setuptools==81.0.0
+# --vocal-sep 用到的上游 vocal_separation 模块在 import 时依赖 wandb。
+wandb==0.24.2
 numpy<2.0.0

@@ -64,6 +64,9 @@ git clone https://github.com/Soul-AILab/SoulX-Singer.git
 #### 2. 创建环境与安装依赖
 
 ```bash
+# 系统依赖：编译 webrtcvad 等需要 C 编译器，音频解码需要 ffmpeg
+# Ubuntu/Debian: sudo apt install -y build-essential ffmpeg
+
 conda create -n soulxsinger python=3.10 -y
 conda activate soulxsinger
 
@@ -71,12 +74,12 @@ conda activate soulxsinger
 pip install torch==2.2.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
 # 安装项目依赖
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt
 ```
 
 #### 3. 一键下载预训练模型
 
-运行内置的下载脚本（国内环境默认通过 `hf-mirror.com` 高速下载）：
+运行内置的下载脚本（默认先尝试 `hf-mirror.com`，失败自动回退 `huggingface.co`；也可用 `HF_ENDPOINT` 环境变量指定下载源）：
 
 ```bash
 python download_models.py
@@ -96,7 +99,8 @@ python download_models.py
 
 ```bash
 python app.py
-# 或使用后台启动脚本：bash start_server_soulx.sh
+# 或使用后台启动脚本（需先 conda activate，或用 PYTHON=/path/to/python 指定解释器）：
+# bash start_server_soulx.sh
 ```
 
 打开浏览器访问 `http://localhost:7860`：
